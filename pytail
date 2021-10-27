@@ -1,0 +1,15 @@
+#!/usr/bin/python3
+
+import subprocess
+import sys
+
+def tail(file):
+    with subprocess.Popen(
+        ['tail', '-n', '0', '-f', file],
+        bufsize=1, stdout=subprocess.PIPE, universal_newlines=True
+    ) as p:
+        for line in p.stdout:
+            yield line.strip('\n')
+
+for line in tail(sys.argv[1]):
+    print("New line: {}".format(line))

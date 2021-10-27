@@ -1,0 +1,295 @@
+#!/usr/bin/python3
+
+import base64
+import collections
+import hmac
+import json
+import os
+import os.path
+import re
+
+from urllib.parse import quote
+
+import yubico
+
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gio, GObject
+
+import pyautogui
+
+YbpSecret = collections.namedtuple('YbpSecret', ['name', 'yubiid', 'slot', 'data'])
+
+class YbpCrypto:
+    backend = default_backend()
+
+    def __init__(self):
+        self._yk = None
+
+    @property
+    def yk(self):
+        if not self._yk:
+            self._yk = yubico.find_yubikey()
+        return self._yk
+
+    def derive_key(self, yubi_id, slot, u_secret, p_challenge):
+        if slot not in {1, 2}:
+            raise Exception()
+
+        if not isinstance(u_secret, str):
+            raise Exception
+
+        if len(p_challenge) != 20:
+            raise Exception()
+
+        serial = self.yk.serial()
+        if serial != yubi_id:
+            raise Exception('Expected yubikey {}, found {}'.format(yubi_id, serial))
+        s_challenge = hmac.new(u_secret.encode(), p_challenge, 'sha1').digest()
+        response = self.yk.challenge_response(s_challenge, slot=slot)
+        return hmac.new(u_secret.encode(), response, 'sha256').digest()
+
+    def encrypt_secret(self, yubi_id, slot, u_secret, secret):
+        with open('/dev/urandom', 'rb') as fp:
+            p_challenge = fp.read(20)
+            iv = fp.read(16)
+        key = self.derive_key(yubi_id, slot, u_secret, p_challenge)
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=self.backend)
+        encryptor = cipher.encryptor()
+
+        padder = padding.PKCS7(128).padder()
+
+        return base64.b64encode(
+            p_challenge +
+            iv + 
+            encryptor.update(padder.update(secret.encode())) +
+            encryptor.update(padder.finalize()) +
+            encryptor.finalize()
+        ).decode()
+
+    def decrypt_secret(self, yubi_id, slot, u_secret, encrypted):
+        encrypted = base64.b64decode(encrypted.encode())
+        p_challenge = encrypted[0:20]
+        iv = encrypted[20:36]
+        encrypted_secret = encrypted[36:]
+        key = self.derive_key(yubi_id, slot, u_secret, p_challenge)
+
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=self.backend)
+        decryptor = cipher.decryptor()
+
+        unpadder = padding.PKCS7(128).unpadder()
+        return (unpadder.update(decryptor.update(encrypted_secret)) +
+                unpadder.update(decryptor.finalize()) +
+                unpadder.finalize()).decode()
+
+
+class YbpGui(Gtk.Window):
+    def __init__(self, secrets):
+        super().__init__(title='YBP Manager')
+        self.result = None
+        self.searcher = re.compile('')
+        self.store = self.create_store(secrets)
+
+        self.add(self.create_mainbox())
+        self.connect('delete-event', self.handle_window_close)
+
+    def run(self):
+        self.show_all()
+        Gtk.main()
+        return self.result
+
+    def create_store(self, secrets):
+        store = Gtk.ListStore(str)
+        for secret in secrets:
+            store.append([secret])
+        filtered = store.filter_new(root=None)
+        filtered.set_visible_func(self.is_visible, None)
+
+        return filtered
+
+    def create_mainbox(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.pack_start(self.create_search(), False, False, 0)
+        box.pack_start(self.create_secrets(), True, True, 0)
+        box.pack_start(self.create_password(), False, False, 0)
+        box.pack_start(self.create_buttons(), False, False, 0)
+
+        return box
+
+    def create_search(self):
+        search = Gtk.SearchEntry()
+        search.set_placeholder_text('Search regex')
+        search.connect('search-changed', self.handle_search_changed)
+        return search
+
+    def create_secrets(self):
+        tree = Gtk.TreeView(model=self.store)
+        tree.set_rules_hint(True)
+        tree.set_search_column(0)
+        self.tree = tree
+
+        renderer = Gtk.CellRendererText()
+        column = Gtk.TreeViewColumn("Name", renderer, text=0)
+        tree.append_column(column)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_shadow_type(Gtk.ShadowType.ETCHED_IN)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(tree)
+
+        scroll.set_size_request(-1, 200)
+
+        return scroll
+
+    def create_password(self):
+        pw = Gtk.Entry()
+        pw.set_placeholder_text('Password')
+        pw.set_visibility(False)
+        pw.set_input_purpose(Gtk.InputPurpose.PASSWORD)
+        pw.connect('activate', self.handle_pw_activate)
+        self.pw = pw
+
+        return pw
+
+    def create_buttons(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+
+        button = Gtk.Button('Ok')
+        button.connect("clicked", self.handle_button_ok)
+        box.pack_start(button, False, False, 0)
+
+        button = Gtk.Button('Cancel')
+        button.connect("clicked", self.handle_button_cancel)
+        box.pack_start(button, False, False, 0)
+
+        button = Gtk.Button('New')
+        button.connect("clicked", self.handle_button_new)
+        box.pack_start(button, False, False, 0)
+
+        return box
+
+    def is_visible(self, store, it, user):
+        return bool(self.searcher.search(store.get_value(it, 0)))
+
+    def handle_search_changed(self, w):
+        try:
+            self.searcher = re.compile(w.get_text())
+        except Exception:
+            pass
+        else:
+            self.store.refilter()
+
+    def handle_button_ok(self, w):
+        self.ok()
+
+    def handle_button_cancel(self, w):
+        self.cancel()
+
+    def handle_window_close(self, w, ev):
+        self.cancel()
+
+    def handle_button_new(self, w):
+        dialog = Gtk.Dialog("New Secret", self, Gtk.DialogFlags.MODAL | Gtk.DialogFlags.DESTROY_WITH_PARENT, (
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OK, Gtk.ResponseType.OK))
+
+        name = Gtk.Entry()
+        name.set_placeholder_text('Name')
+        dialog.vbox.pack_start(name, False, False, 0)
+        name.show()
+
+        user_pw = Gtk.Entry()
+        user_pw.set_placeholder_text('Password')
+        dialog.vbox.pack_start(user_pw, False, False, 0)
+        user_pw.show()
+
+        secret = Gtk.Entry()
+        secret.set_placeholder_text('Secret')
+        dialog.vbox.pack_start(secret, False, False, 0)
+        secret.show()
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            self.result = {
+                'is_new': True,
+                'name': name.get_text(),
+                'user_pw': user_pw.get_text(),
+                'pw': secret.get_text(),
+            }
+            dialog.destroy()
+            self.destroy()
+            Gtk.main_quit()
+        else:
+            dialog.destroy()
+
+    def handle_pw_activate(self, w):
+        self.ok()
+
+    def cancel(self):
+        self.result = None
+        self.destroy()
+        Gtk.main_quit()
+
+    def ok(self):
+        model, it = self.tree.get_selection().get_selected()
+        secret = model.get_value(it, 0)
+        pw = self.pw.get_text()
+        self.result = {'is_new': False, 'name': secret, 'user_pw': pw}
+        self.destroy()
+        Gtk.main_quit()
+
+
+class YbpManager:
+    def load_secrets(self):
+        path = os.path.expanduser('~/.ybp')
+        self.secrets = {}
+        for entry in os.scandir(path):
+            if not entry.name.startswith('.') and entry.is_file():
+                with open(entry.path) as fp:
+                    e = YbpSecret(**json.load(fp))
+                    self.secrets[e.name] = e
+
+    def write_secret(self, s):
+        path = os.path.expanduser('~/.ybp')
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+        filename = path + '/' + quote(s.name, '~') + '.json'
+        if os.path.exists(filename):
+            raise Exception('Exists')
+
+        with open(filename, 'wt') as fp:
+            json.dump(dict(s._asdict()), fp, sort_keys=True, indent=4)
+
+    def run(self):
+        self.load_secrets()
+        ybc = YbpCrypto()
+
+        serial = ybc.yk.serial()
+        gui = YbpGui([s.name for s in self.secrets.values() if s.yubiid == serial])
+        result = gui.run()
+        if not result:
+            return
+        
+        if not result['is_new']:
+            s = self.secrets[result['name']]
+            pw = ybc.decrypt_secret(s.yubiid, s.slot, result['user_pw'], s.data)
+            pyautogui.typewrite(pw, interval=0.05)
+        else:
+            slot=1
+            data = ybc.encrypt_secret(serial, slot, result['user_pw'], result['pw'])
+            s = YbpSecret(name=result['name'], yubiid=serial, slot=slot, data=data)
+            self.write_secret(s)
+
+ybp = YbpManager()
+ybp.run()
+
+try:
+    ybp = None
+    gc.collect()
+except Exception:
+    pass

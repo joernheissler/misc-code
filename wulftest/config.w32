@@ -1,0 +1,5 @@
+ARG_ENABLE("wulftest", "enable wulftest support", "no");
+
+if (PHP_WULFTEST != "no") {
+	EXTENSION("wulftest", "wulftest.c");
+}

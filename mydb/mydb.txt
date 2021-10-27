@@ -1,0 +1,46 @@
+mydb is an abstraction lib for mysql. It makes prepared statements usable, it handles the memory management and errors.
+
+param_fmt:                          (unsigned)
+b   blob            mydb_blob*
+c   tiny            char            C
+D   date            TIME
+d   double          double
+f   float           float
+h   short           short           H
+l   long            int             u
+L   longlong        long long       U
+s   string          mydb_blob*
+S   timestamp       TIME
+T   datetime        TIME
+t   time            TIME
+0   null            NULL
+#   string          char* (null terminated string)
+
+result_fmt:                         (unsigned)
+.   newdecimal      mydb_blob
+2   bit             mydb_blob
+b   blob            mydb_blob
+B   long_blob       mydb_blob
+c   tiny            char            C
+D   date            TIME
+d   double          double
+f   float           float
+h   short           short           H
+i   int24           int             I
+l   long            int             u
+L   longlong        long long       U
+O   medium_blob     mydb_blob
+o   tiny_blob       mydb_blob
+s   string          mydb_blob
+S   timestamp       TIME
+T   datetime        TIME
+t   time            TIME
+v   var_string      mydb_blob
+
+Usage:
+* call mydb_new();
+* Set options and connection parameters in object. If ~/.my.cnf is set up properly, you might not need to do anything
+* call mydb_query_new. query is the SQL query with parameter markers, param_fmt is a string consisting of param_fmt
+  chars (see above), result_fmt is a string consisting of result_fmt chars (see above). Those parameters are optional
+  if the query takes no parameters (e.g. SELECT without WHERE) or generates no result (e.g. INSERT statement).
+* call mydb_query_execute to execute a query with parameters and to read the result.

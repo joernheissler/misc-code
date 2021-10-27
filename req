@@ -1,0 +1,49 @@
+#!/usr/bin/perl
+
+use strict;
+use LWP::UserAgent;
+use Data::Dumper;
+
+my $cookie_jar = CookieLog->new('file' => $ENV{'HOME'}.'/.req.cookies.txt', 'autosave' => 1, 'ignore_discard' => 1);
+my $ua = LWP::UserAgent->new('cookie_jar' => $cookie_jar, 'timeout' => 30);
+$ua->agent('Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.0.13) Gecko/2009082006 Firefox/3.0.1 (Debian-3.0.12-1)');
+
+unless(@ARGV >= 2 and $ARGV[0] =~ /^(get|post)$/si) {
+    print STDERR "$0 <get|post> url [key0] [value0] [...]\n";
+    exit 1;
+}
+
+my $m = shift @ARGV;
+my $url = shift @ARGV;
+
+my $resp;
+if($m =~ /get/i) {
+    if(@ARGV) {
+        my @x=();
+        while(@ARGV >= 2) {
+            my $k = shift @ARGV;
+            my $v = shift @ARGV;
+            $k =~ s/([^ 0-9a-zA-Z])/sprintf("%%%02X", ord($1))/sieg; $k =~ tr/ /+/;
+            $v =~ s/([^ 0-9a-zA-Z])/sprintf("%%%02X", ord($1))/sieg; $v =~ tr/ /+/;
+            push(@x, "$k=$v");
+        }
+        $url .= '?' . join('&',@x);
+    }
+    $resp = $ua->get($url);
+} else {
+    $resp = $ua->post($url, { @ARGV });
+}
+
+die unless($resp->is_success);
+print($resp->content);
+
+{
+    package CookieLog;
+    use base 'HTTP::Cookies';
+    use Data::Dumper;
+    sub set_cookie {
+        my $class = shift;
+        print "Cookie: '$_[1]' ==> '$_[2]'\n";
+        $class->SUPER::set_cookie(@_);
+    }
+}

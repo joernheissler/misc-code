@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+use strict;
+
+my @flags = qw(gcc -ggdb3 -std=c99 -O2 -Wall -Wextra -pedantic
+               -Wshadow -Wwrite-strings -march=native);
+
+my ($c, $w);
+my $src;
+
+foreach(@ARGV) {
+    $c = 1 if /^-[cSE]$/;
+    if (/^-W$/) {
+        $w = 1;
+        next;
+    }
+    push(@flags, $_);
+    $src = $_ unless $src or /^-/;
+}
+
+die "no source file" unless $src;
+unless ($c) {
+    push(@flags, '-o');
+    $src =~ s,.*/,,;
+    die "no dot in source" unless $src =~ s/\.[^.]*$//;
+    push(@flags, $src);
+}
+unless($w) {
+    push(@flags, '-Werror');
+}
+
+system(@flags);

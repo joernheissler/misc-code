@@ -1,0 +1,36 @@
+#!/bin/bash -e
+
+# Output the hard drive partition that / is on, assuming there is exactly one partition.
+# License: CC0
+
+rootdev=$(stat --printf=%d /)
+major=$((rootdev / 256))
+minor=$((rootdev % 256))
+
+cd "/sys/dev/block/$major:$minor"
+slave=$(basename $(readlink -ev .))
+
+while [[ -d slaves ]]; do
+    cd slaves
+    slaves=(*)
+    ((${#slaves[@]} == 1)) || {
+        echo "Not exactly 1 slave found: ${slaves[@]}" 1>&2
+        exit 1
+    }
+    slave="${slaves[0]}"
+    cd -- "$slave"
+done
+
+devname="/dev/$slave"
+read devmajor devminor < <(stat --printf="%t %T\n" "$devname")
+devmajor=$((0x$devmajor))
+devminor=$((0x$devminor))
+devnumber="$devmajor:$devminor"
+
+read sysdevnumber < dev
+if [[ "$devnumber" != "$sysdevnumber" ]]; then
+    echo "$devname has number $devnumber, but `pwd`/dev has number $sysdevnumber" 1>&2
+    exit 1
+fi
+
+echo "$devname"

@@ -1,0 +1,4 @@
+compile with:
+    gcc -c -std=c99 -O3 -Wall -Wextra -pedantic -Wshadow -Wwrite-strings -march=native -o hello.o hello.c
+    gcc -c -std=c99 -O3 -Wall -Wextra -pedantic -Wshadow -Wwrite-strings -march=native -o main.o main.c
+    gcc -s -o main hello.o main.o

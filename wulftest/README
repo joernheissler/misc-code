@@ -1,0 +1,5 @@
+phpize
+make
+make install
+install wulftest.ini to correct php config path (depends on distro!)
+php test.php
