@@ -1,0 +1,36 @@
+#!/usr/bin/python3
+
+import json
+import sys
+import yaml
+from pygments import style, lexers, highlight, formatters
+from pygments.token import Token
+
+
+class YamlStyle(style.Style):
+    styles = {
+        Token.Keyword.Constant: "#f88",
+        Token.Literal.String.Double: "#8f8",
+        Token.Name.Tag: "#ff8",
+        Token.Punctuation.Indicator: "#8ff",
+        Token.Literal.Number.Integer: "#88f",
+        Token.Literal.Number.Float: "#f8f",
+    }
+
+
+def fmt(doc):
+    return highlight(doc, lexers.YamlLexer(), formatters.Terminal256Formatter(style=YamlStyle))
+
+
+class Dumper(yaml.SafeDumper):
+    def increase_indent(self, flow=False, *args, **kwargs):
+        return super().increase_indent(flow=flow, indentless=False)
+
+
+doc = json.load(sys.stdin)
+doc = yaml.dump(doc, Dumper=Dumper, indent=2, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+if len(sys.argv) > 1 and sys.argv[1] == "-r":
+    print(doc)
+else:
+    print(fmt(doc))
