@@ -1,0 +1,95 @@
+#!/usr/bin/python3
+
+"""
+Utility to dynamically update DNS with current IPv6 address of an interface.
+
+config.json:
+{
+    "device": "wlan0",
+    "ns": "primary-ns.example.net",
+    "keyname": "keyname.example.net.",
+    "key": "Base64EncodedSecret=",
+    "alg": "sha256",
+    "host": "hostname",
+    "domain": "domain2update.tld"
+}
+"""
+
+import json
+import signal
+import subprocess
+
+from base64 import b64decode
+from dataclasses import dataclass
+from ipaddress import IPv6Address
+from sys import argv, stdin
+
+import dns.message
+import dns.query
+import dns.resolver
+import dns.tsig
+import dns.update
+
+
+@dataclass
+class Config:
+    device: str
+    ns: str
+    keyname: str
+    key: str
+    alg: str
+    domain: str
+    host: str
+
+
+if len(argv) > 1:
+    with open(argv[1], "rt") as fp:
+        config = Config(**json.load(fp))
+else:
+    config = Config(**json.load(stdin))
+
+target = f"{config.host}.{config.domain}"
+
+print(f"Looking up {config.device} address...")
+doc = json.loads(subprocess.check_output(["ip", "-j", "a", "show", "dev", config.device], text=True))
+addr = next(a["local"] for a in doc[0]["addr_info"] if a["family"] == "inet6" and a.get("mngtmpaddr"))
+print(f"{config.device} address = {addr}")
+
+signal.alarm(30)
+
+print()
+print(f"Resolving {config.ns}...")
+dns_ip = dns.resolver.resolve(config.ns, "aaaa").rrset[0].address
+print(f"{config.ns} = {dns_ip}")
+
+signal.alarm(30)
+print()
+print(f"Querying current address of {target}")
+query = dns.message.make_query(target, "aaaa")
+resp = dns.query.udp_with_fallback(query, dns_ip)[0]
+if resp.rcode() == 0:
+    cur_addr = resp.answer[0][0].address
+    print(f"Address of {target} is {cur_addr}")
+    if IPv6Address(cur_addr) == IPv6Address(addr):
+        print("Nothing to do!")
+        exit(0)
+
+keyring = {
+    config.keyname: dns.tsig.Key(
+        config.keyname,
+        b64decode(config.key),
+        getattr(dns.tsig, f"hmac_{config.alg}".upper()),
+    ),
+}
+
+signal.alarm(30)
+print()
+print("Updating address")
+update = dns.update.Update(config.domain, keyring=keyring)
+update.replace(config.host, 300, "aaaa", addr)
+resp = dns.query.tcp(update, dns_ip)
+if resp.rcode():
+    print(f"Update failed with code {resp.rcode()}")
+    exit(1)
+
+print("Update succeeded")
