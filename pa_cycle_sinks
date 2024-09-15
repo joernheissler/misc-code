@@ -1,0 +1,37 @@
+#!/usr/bin/python3
+"""
+Cycle through available pulse audio sinks, i.e. switch to next output device.
+
+(c) 2024 Jörn Heissler, license: Unlicense
+"""
+
+import asyncio
+from random import choice
+
+from libpulse.libpulse import LibPulse
+
+
+async def main():
+    async with LibPulse("foobar") as lp:
+        all_sinks = sorted(
+            sink.name for sink in await lp.pa_context_get_sink_info_list()
+        )
+        if not all_sinks:
+            print("No sinks available")
+            return
+
+        cur_sink = (await lp.pa_context_get_server_info()).default_sink_name
+        print(f"Current sink: {cur_sink!r}")
+
+        try:
+            idx = all_sinks.index(cur_sink)
+        except ValueError:
+            print("Current sink not in list of available sinks")
+            new_sink = choice(all_sinks)
+        else:
+            new_sink = all_sinks[(idx + 1) % len(all_sinks)]
+        print(f"Setting new sink: {new_sink!r}")
+        await lp.pa_context_set_default_sink(new_sink)
+
+
+asyncio.run(main())
