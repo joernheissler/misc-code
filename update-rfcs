@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# Create/update mirror of the RFCs
+
+rsync -avz --delete ftp.rfc-editor.org::rfcs-text-only ~/doc/rfc/
